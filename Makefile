@@ -1,4 +1,5 @@
 SITE ?= site_a
+SHOW_KUBEADMIN_PASSWORD ?= false
 
 .PHONY: deps ping prepare discover render install evpn test verify all
 
@@ -27,7 +28,7 @@ test:
 	ansible-playbook playbooks/06_deploy_test_workloads.yml --limit $(SITE) --ask-vault-pass
 
 verify:
-	ansible-playbook playbooks/07_verify.yml --limit $(SITE) --ask-vault-pass
+	ansible-playbook playbooks/07_verify.yml --limit $(SITE) --ask-vault-pass -e show_kubeadmin_password=$(SHOW_KUBEADMIN_PASSWORD)
 
 all: prepare render install evpn test verify
 

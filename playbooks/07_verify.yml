@@ -30,6 +30,37 @@
       register: oc_status
       changed_when: false
 
+
+    - name: Cluster access status
+      become: false
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+
+        echo "# Cluster access"
+        echo "Console URL:"
+        oc -n openshift-console get route console -o jsonpath='https://{.spec.host}{"\n"}' || true
+        echo
+        echo "Username:"
+        echo "kubeadmin"
+        echo
+{% if show_kubeadmin_password | default(false) | bool %}
+        echo "Password:"
+        if [ -f "{{ install_dir }}/auth/kubeadmin-password" ]; then
+          cat "{{ install_dir }}/auth/kubeadmin-password"
+          echo
+        else
+          oc -n kube-system get secret kubeadmin -o jsonpath="{.data.kubeadmin}" | base64 -d
+          echo
+        fi
+{% else %}
+        echo "Password:"
+        echo "hidden - run: make verify SITE={{ site_id }} SHOW_KUBEADMIN_PASSWORD=true"
+{% endif %}
+      register: cluster_access_status
+      changed_when: false
+
     - name: Bastion FRR status
       ansible.builtin.shell: |
         set -euo pipefail
@@ -50,6 +81,11 @@
         bridge fdb show dev vxlan{{ evpn_mac_vrf_vni }} || true
       register: frr_status
       changed_when: false
+
+
+    - name: Print cluster access status
+      ansible.builtin.debug:
+        msg: "{{ cluster_access_status.stdout }}"
 
     - name: Print OpenShift status
       ansible.builtin.debug:
