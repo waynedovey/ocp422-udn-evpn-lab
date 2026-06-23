@@ -4,12 +4,18 @@
   become: true
   gather_facts: true
   tasks:
+    - name: Detect bastion user's primary group
+      become: false
+      ansible.builtin.command: id -gn
+      register: bastion_primary_group
+      changed_when: false
+
     - name: Create lab directories
       ansible.builtin.file:
         path: "{{ item }}"
         state: directory
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        group: "{{ bastion_primary_group.stdout }}"
         mode: '0755'
       loop:
         - "{{ lab_root }}"
@@ -55,7 +61,7 @@
         remote_src: true
         creates: "{{ installer_bin_dir }}/oc"
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        group: "{{ bastion_primary_group.stdout }}"
         mode: '0755'
 
     - name: Download openshift-install
@@ -65,7 +71,7 @@
         remote_src: true
         creates: "{{ installer_bin_dir }}/openshift-install"
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        group: "{{ bastion_primary_group.stdout }}"
         mode: '0755'
 
     - name: Add installer bin dir to lab-user bashrc
@@ -74,7 +80,7 @@
         line: "export PATH={{ installer_bin_dir }}:$PATH"
         create: true
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        group: "{{ bastion_primary_group.stdout }}"
 
     - name: Show installed versions
       become: false

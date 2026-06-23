@@ -1,6 +1,6 @@
 ---
-cluster_name: "site-b"
-base_domain: "rhdz5.dynamic2.redhatworkshops.io"
+cluster_name: "rhdz5"
+base_domain: "dynamic2.redhatworkshops.io"
 subnet_cidr: "192.168.70.0/24"
 vsphere_network: "segment-sandbox-rhdz5"
 api_vip: "192.168.70.201"
@@ -8,5 +8,16 @@ ingress_vip: "192.168.70.202"
 vcenter_folder: "/SDDC-Datacenter/vm/Workloads/sandbox-rhdz5"
 vcenter_username: "sandbox-rhdz5@demo"
 vcenter_password: "{{ vault_site_b_vcenter_password }}"
-ansible_password: "{{ vault_site_b_bastion_password }}"
+#ansible_password: "{{ vault_site_b_bastion_password }}"
+ansible_ssh_private_key_file: "~/.ssh/id_rsa"
 ansible_become_password: "{{ vault_site_b_bastion_password }}"
+
+vcenter_compute_cluster: "/SDDC-Datacenter/host/Cluster-1"
+vcenter_datastore: "/SDDC-Datacenter/datastore/workload_share_FZZZD"
+vcenter_resource_pool: ""
+
+ocp_bgp_asn: 64521
+evpn_route_target_base: 64520
+intersite_remote_underlay_cidr: "192.168.69.0/24"
+intersite_remote_gateway: "192.168.70.1"
+intersite_remote_bastion_ip: "192.168.69.10"

@@ -1,7 +1,7 @@
 apiVersion: k8s.ovn.org/v1
 kind: RouteAdvertisements
 metadata:
-  name: {{ site_id }}-evpn-cudns
+  name: {{ site_id | replace('_', '-') }}-evpn-cudns
 spec:
   targetVRF: auto
   advertisements:

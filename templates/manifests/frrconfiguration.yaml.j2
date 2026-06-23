@@ -1,7 +1,7 @@
 apiVersion: frrk8s.metallb.io/v1beta1
 kind: FRRConfiguration
 metadata:
-  name: {{ site_id }}-fabric-peer
+  name: {{ site_id | replace('_', '-') }}-fabric-peer
   namespace: openshift-frr-k8s
   labels:
     evpn-lab/site: {{ site_id }}

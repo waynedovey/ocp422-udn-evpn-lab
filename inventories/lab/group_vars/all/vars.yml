@@ -53,13 +53,15 @@ vcenter_password: "{{ vault_vcenter_password }}"
 
 # These must be discovered/finalized for your workshop vCenter.
 # Run: make discover SITE=site_a
-vcenter_compute_cluster: "CHANGE-ME"
-vcenter_datastore: "CHANGE-ME"
+vcenter_compute_cluster: "/SDDC-Datacenter/host/Cluster-1"
+vcenter_datastore: "/SDDC-Datacenter/datastore/workload_share_FZZZD"
 vcenter_resource_pool: ""
 
 # Pull secret and SSH key should come from vault.yml.
-pull_secret: "{{ vault_pull_secret }}"
-ssh_public_key: "{{ vault_ssh_public_key }}"
+pull_secret: "{{ vault_pull_secret | default('') }}"
+ssh_public_key: "{{ vault_ssh_public_key | default('') }}"
 
 # vSphere portgroup security changes are optional and often not permitted in workshop sandboxes.
 configure_portgroup_security: false
+
+ansible_user_group: "users"

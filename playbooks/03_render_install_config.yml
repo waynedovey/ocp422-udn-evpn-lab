@@ -22,7 +22,7 @@
         path: "{{ install_dir }}"
         state: directory
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        group: "{{ ansible_user_group | default(ansible_user) }}"
         mode: '0700'
 
     - name: Render install-config.yaml
@@ -30,7 +30,7 @@
         src: ../templates/install-config.yaml.j2
         dest: "{{ install_dir }}/install-config.yaml"
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        group: "{{ ansible_user_group | default(ansible_user) }}"
         mode: '0600'
       no_log: true
 
@@ -40,7 +40,7 @@
         dest: "{{ install_dir }}/install-config.yaml.backup"
         remote_src: true
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        group: "{{ ansible_user_group | default(ansible_user) }}"
         mode: '0600'
       no_log: true
 

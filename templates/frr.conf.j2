@@ -3,6 +3,10 @@ hostname {{ site_id }}-fabric-frr
 log syslog informational
 service integrated-vtysh-config
 !
+{% if intersite_remote_underlay_cidr is defined and intersite_remote_gateway is defined %}
+ip route {{ intersite_remote_underlay_cidr }} {{ intersite_remote_gateway }}
+{% endif %}
+!
 router bgp {{ fabric_bgp_asn }}
  bgp router-id {{ fabric_router_id }}
  no bgp ebgp-requires-policy
@@ -11,6 +15,11 @@ router bgp {{ fabric_bgp_asn }}
 {% for ip in ocp_node_ips %}
  neighbor {{ ip }} peer-group OCP
 {% endfor %}
+{% if intersite_remote_bastion_ip is defined %}
+ neighbor {{ intersite_remote_bastion_ip }} remote-as {{ fabric_bgp_asn }}
+ neighbor {{ intersite_remote_bastion_ip }} update-source {{ fabric_router_id }}
+ neighbor {{ intersite_remote_bastion_ip }} description intersite-bastion-evpn
+{% endif %}
  !
  address-family ipv4 unicast
 {% for ip in ocp_node_ips %}
@@ -20,6 +29,9 @@ router bgp {{ fabric_bgp_asn }}
  !
  address-family l2vpn evpn
   neighbor OCP activate
+{% if intersite_remote_bastion_ip is defined %}
+  neighbor {{ intersite_remote_bastion_ip }} activate
+{% endif %}
   advertise-all-vni
   vni {{ evpn_mac_vrf_vni }}
    rd {{ fabric_bgp_asn }}:{{ evpn_mac_vrf_vni }}

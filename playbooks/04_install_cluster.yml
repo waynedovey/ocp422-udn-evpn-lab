@@ -1,39 +1,164 @@
 ---
 - name: Install OpenShift cluster on vSphere using openshift-install
   hosts: all
-  become: false
   gather_facts: false
+
+  vars:
+    install_dir: "{{ (lab_base_dir | default('/home/' ~ ansible_user ~ '/ocp422-udn-evpn-lab')) }}/artifacts/{{ site_id }}"
+    install_log: "{{ install_dir }}/install-wrapper.log"
+    install_pid: "{{ install_dir }}/.install.pid"
+    install_rc: "{{ install_dir }}/.install.rc"
+
   tasks:
     - name: Check if cluster metadata already exists
       ansible.builtin.stat:
         path: "{{ install_dir }}/metadata.json"
-      register: metadata
+      register: cluster_metadata
 
-    - name: Ensure install-config exists for fresh install
+    - name: Check if kubeconfig already exists
+      ansible.builtin.stat:
+        path: "{{ install_dir }}/auth/kubeconfig"
+      register: kubeconfig_file
+
+    - name: Check if install-config exists for fresh install
       ansible.builtin.stat:
         path: "{{ install_dir }}/install-config.yaml"
       register: install_config
-      when: not metadata.stat.exists
 
-    - name: Stop if install-config is missing
+    - name: Check if detached install PID exists
+      ansible.builtin.stat:
+        path: "{{ install_pid }}"
+      register: install_pid_file
+
+    - name: Check if detached install return code exists
+      ansible.builtin.stat:
+        path: "{{ install_rc }}"
+      register: install_rc_file_stat
+
+    - name: Stop if there is no install state to continue from
       ansible.builtin.fail:
-        msg: "{{ install_dir }}/install-config.yaml is missing. Run playbooks/03_render_install_config.yml first."
+        msg: >-
+          No install-config.yaml, metadata.json, kubeconfig, detached PID, or detached RC found in {{ install_dir }}.
+          Run make render SITE={{ site_id }} first, or check the install directory.
       when:
-        - not metadata.stat.exists
+        - not cluster_metadata.stat.exists
+        - not kubeconfig_file.stat.exists
         - not install_config.stat.exists
+        - not install_pid_file.stat.exists
+        - not install_rc_file_stat.stat.exists
 
-    - name: Run openshift-install create cluster
+    - name: Create detached OpenShift install runner
+      ansible.builtin.copy:
+        dest: "{{ install_dir }}/run-install.sh"
+        mode: "0755"
+        content: |
+          #!/usr/bin/env bash
+          set -Eeuo pipefail
+
+          export PATH=/home/lab-user/bin:$PATH
+          cd "{{ install_dir }}"
+
+          rm -f "{{ install_rc }}"
+
+          {
+            echo "===== OpenShift install started: $(date -Is) ====="
+            openshift-install create cluster --dir "{{ install_dir }}" --log-level=info
+            rc=$?
+            echo "$rc" > "{{ install_rc }}"
+            echo "===== OpenShift install finished with rc=${rc}: $(date -Is) ====="
+            exit "$rc"
+          } >> "{{ install_log }}" 2>&1
+      when:
+        - not cluster_metadata.stat.exists
+        - not kubeconfig_file.stat.exists
+        - install_config.stat.exists
+
+    - name: Start OpenShift install in detached mode
       ansible.builtin.shell: |
         set -euo pipefail
-        export PATH={{ installer_bin_dir }}:$PATH
-        openshift-install create cluster --dir {{ install_dir }} --log-level=info
+
+        if [ -f "{{ install_rc }}" ]; then
+          echo "Installer already finished with rc $(cat {{ install_rc }})"
+          exit 0
+        fi
+
+        if [ -f "{{ install_pid }}" ] && kill -0 "$(cat {{ install_pid }})" 2>/dev/null; then
+          echo "Installer already running with PID $(cat {{ install_pid }})"
+          exit 0
+        fi
+
+        nohup "{{ install_dir }}/run-install.sh" >/dev/null 2>&1 &
+        echo $! > "{{ install_pid }}"
+        echo "Started installer with PID $(cat {{ install_pid }})"
       args:
-        chdir: "{{ install_dir }}"
-      async: 7200
-      poll: 30
-      register: install_result
-      when: not metadata.stat.exists
+        executable: /bin/bash
+      register: detached_start
+      changed_when: "'Started installer' in detached_start.stdout"
+      when:
+        - not cluster_metadata.stat.exists
+        - not kubeconfig_file.stat.exists
+        - install_config.stat.exists
+
+    - name: Show detached install status
+      ansible.builtin.debug:
+        msg: "{{ detached_start.stdout | default('Cluster already has metadata/kubeconfig or existing detached state; not starting a new install.') }}"
+
+    - name: Wait for installer process to finish
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        if [ -f "{{ install_rc }}" ]; then
+          echo "finished rc=$(cat {{ install_rc }})"
+          exit 0
+        fi
+
+        if [ -f "{{ install_pid }}" ] && kill -0 "$(cat {{ install_pid }})" 2>/dev/null; then
+          echo "running pid=$(cat {{ install_pid }})"
+          exit 1
+        fi
+
+        echo "installer not running and no rc file yet"
+        exit 1
+      args:
+        executable: /bin/bash
+      register: install_state
+      retries: 180
+      delay: 60
+      until: install_state.rc == 0
+      when:
+        - not cluster_metadata.stat.exists
+        - not kubeconfig_file.stat.exists
+
+    - name: Read installer return code if present
+      ansible.builtin.slurp:
+        src: "{{ install_rc }}"
+      register: installer_rc_file
+      when:
+        - install_rc_file_stat.stat.exists or
+          (install_state is defined and install_state.rc is defined and install_state.rc == 0)
+
+    - name: Fail if installer return code was not zero
+      ansible.builtin.fail:
+        msg: >-
+          openshift-install failed. Check {{ install_log }} on the bastion.
+      when:
+        - installer_rc_file is defined
+        - installer_rc_file.content is defined
+        - (installer_rc_file.content | b64decode | trim) != "0"
+
+    - name: Wait for OpenShift install-complete
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH=/home/lab-user/bin:$PATH
+        openshift-install wait-for install-complete --dir "{{ install_dir }}" --log-level=info
+      args:
+        executable: /bin/bash
+      register: wait_complete
+      changed_when: false
 
     - name: Show kubeconfig location
       ansible.builtin.debug:
-        msg: "Kubeconfig expected at {{ kubeconfig_path }}"
+        msg: |
+          Install complete for {{ site_id }}.
+          Kubeconfig expected at {{ install_dir }}/auth/kubeconfig
+          Installer wrapper log: {{ install_log }}

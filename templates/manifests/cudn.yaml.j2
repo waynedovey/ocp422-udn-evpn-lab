@@ -16,7 +16,7 @@ spec:
       - {{ cudn_subnet }}
     transport: EVPN
     evpn:
-      vtep: {{ site_id }}-vtep
+      vtep: {{ site_id | replace('_', '-') }}-vtep
       macVRF:
         vni: {{ evpn_mac_vrf_vni }}
         routeTarget: "{{ evpn_route_target_base }}:{{ evpn_mac_vrf_vni }}"

@@ -1,0 +1,39 @@
+---
+- name: Install OpenShift cluster on vSphere using openshift-install
+  hosts: all
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Check if cluster metadata already exists
+      ansible.builtin.stat:
+        path: "{{ install_dir }}/metadata.json"
+      register: metadata
+
+    - name: Ensure install-config exists for fresh install
+      ansible.builtin.stat:
+        path: "{{ install_dir }}/install-config.yaml"
+      register: install_config
+      when: not metadata.stat.exists
+
+    - name: Stop if install-config is missing
+      ansible.builtin.fail:
+        msg: "{{ install_dir }}/install-config.yaml is missing. Run playbooks/03_render_install_config.yml first."
+      when:
+        - not metadata.stat.exists
+        - not install_config.stat.exists
+
+    - name: Run openshift-install create cluster
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        openshift-install create cluster --dir {{ install_dir }} --log-level=info
+      args:
+        chdir: "{{ install_dir }}"
+      async: 7200
+      poll: 30
+      register: install_result
+      when: not metadata.stat.exists
+
+    - name: Show kubeconfig location
+      ansible.builtin.debug:
+        msg: "Kubeconfig expected at {{ kubeconfig_path }}"

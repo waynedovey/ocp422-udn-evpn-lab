@@ -30,3 +30,6 @@ verify:
 	ansible-playbook playbooks/07_verify.yml --limit $(SITE) --ask-vault-pass
 
 all: prepare render install evpn test verify
+
+install-status:
+	ansible $${SITE}-bastion -m shell -a 'INSTALL_DIR=/home/lab-user/ocp422-udn-evpn-lab/artifacts/$${SITE}; echo "### PID"; cat $$INSTALL_DIR/.install.pid 2>/dev/null || true; echo "### RC"; cat $$INSTALL_DIR/.install.rc 2>/dev/null || true; echo "### Last logs"; tail -80 $$INSTALL_DIR/install-wrapper.log 2>/dev/null || tail -80 $$INSTALL_DIR/.openshift_install.log 2>/dev/null || true' --ask-vault-pass

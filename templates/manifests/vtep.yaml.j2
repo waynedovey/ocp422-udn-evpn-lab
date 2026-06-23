@@ -1,7 +1,7 @@
 apiVersion: k8s.ovn.org/v1
 kind: VTEP
 metadata:
-  name: {{ site_id }}-vtep
+  name: {{ site_id | replace('_', '-') }}-vtep
 spec:
   mode: Unmanaged
   cidrs:

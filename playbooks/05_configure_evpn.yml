@@ -100,7 +100,7 @@
         path: "{{ lab_root }}/manifests/{{ site_id }}"
         state: directory
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        group: "{{ ansible_user_group | default(ansible_user) }}"
         mode: '0755'
 
     - name: Render OpenShift EVPN manifests
@@ -108,7 +108,7 @@
         src: "../templates/manifests/{{ item }}.yaml.j2"
         dest: "{{ lab_root }}/manifests/{{ site_id }}/{{ item }}.yaml"
         owner: "{{ ansible_user }}"
-        group: "{{ ansible_user }}"
+        group: "{{ ansible_user_group | default(ansible_user) }}"
         mode: '0644'
       loop:
         - vtep
@@ -163,7 +163,9 @@
         oc apply -f {{ lab_root }}/manifests/{{ site_id }}/vtep.yaml
         oc apply -f {{ lab_root }}/manifests/{{ site_id }}/frrconfiguration.yaml
         oc apply -f {{ lab_root }}/manifests/{{ site_id }}/routeadvertisements.yaml
-        oc create ns {{ cudn_namespace }} --dry-run=client -o yaml | oc apply -f -
+        if ! oc get ns {{ cudn_namespace }} >/dev/null 2>&1; then
+          oc create ns {{ cudn_namespace }} --dry-run=client -o yaml | oc label --local -f - k8s.ovn.org/primary-user-defined-network= -o yaml | oc apply -f -
+        fi
         oc apply -f {{ lab_root }}/manifests/{{ site_id }}/cudn.yaml
       register: apply_evpn
       changed_when: "'created' in apply_evpn.stdout or 'configured' in apply_evpn.stdout"
