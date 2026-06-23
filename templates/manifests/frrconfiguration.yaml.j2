@@ -1,0 +1,16 @@
+apiVersion: frrk8s.metallb.io/v1beta1
+kind: FRRConfiguration
+metadata:
+  name: {{ site_id }}-fabric-peer
+  namespace: openshift-frr-k8s
+  labels:
+    evpn-lab/site: {{ site_id }}
+spec:
+  nodeSelector: {}
+  bgp:
+    routers:
+    - asn: {{ ocp_bgp_asn }}
+      neighbors:
+      - address: {{ fabric_router_id }}
+        asn: {{ fabric_bgp_asn }}
+        port: 179

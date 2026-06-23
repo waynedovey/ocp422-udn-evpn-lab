@@ -1,0 +1,26 @@
+---
+- name: Deploy simple test workloads on the primary EVPN CUDN
+  hosts: all
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Render test workload manifest
+      ansible.builtin.template:
+        src: ../templates/manifests/test-pod.yaml.j2
+        dest: "{{ lab_root }}/manifests/{{ site_id }}/test-pod.yaml"
+        mode: '0644'
+
+    - name: Apply test workload
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+        oc apply -f {{ lab_root }}/manifests/{{ site_id }}/test-pod.yaml
+        oc -n {{ cudn_namespace }} rollout status deploy/evpn-test --timeout=180s
+        oc -n {{ cudn_namespace }} get pods -o wide
+      register: test_apply
+      changed_when: "'created' in test_apply.stdout or 'configured' in test_apply.stdout"
+
+    - name: Print test workload status
+      ansible.builtin.debug:
+        msg: "{{ test_apply.stdout }}"

@@ -1,0 +1,12 @@
+---
+cluster_name: "site-a"
+base_domain: "9wnp4.dynamic2.redhatworkshops.io"
+subnet_cidr: "192.168.69.0/24"
+vsphere_network: "segment-sandbox-9wnp4"
+api_vip: "192.168.69.201"
+ingress_vip: "192.168.69.202"
+vcenter_folder: "/SDDC-Datacenter/vm/Workloads/sandbox-9wnp4"
+vcenter_username: "sandbox-9wnp4@demo"
+vcenter_password: "{{ vault_site_a_vcenter_password }}"
+ansible_password: "{{ vault_site_a_bastion_password }}"
+ansible_become_password: "{{ vault_site_a_bastion_password }}"

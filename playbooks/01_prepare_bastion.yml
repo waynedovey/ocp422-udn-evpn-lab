@@ -1,0 +1,86 @@
+---
+- name: Prepare bastion for OpenShift 4.22 UDN EVPN lab
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Create lab directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+      loop:
+        - "{{ lab_root }}"
+        - "{{ installer_bin_dir }}"
+        - "{{ install_dir }}"
+        - "{{ lab_root }}/manifests"
+
+    - name: Install base packages
+      ansible.builtin.package:
+        name:
+          - curl
+          - tar
+          - gzip
+          - jq
+          - git
+          - tmux
+          - bind-utils
+          - iproute
+          - python3
+          - python3-pip
+          - firewalld
+        state: present
+
+    - name: Install FRR if available from enabled repos
+      ansible.builtin.package:
+        name:
+          - frr
+        state: present
+      register: frr_install
+      failed_when: false
+
+    - name: Warn if FRR package was not installed
+      ansible.builtin.debug:
+        msg: >-
+          FRR package was not installed from enabled repos. Enable a repo that provides frr,
+          then rerun this playbook before running the EVPN playbook.
+      when: frr_install is failed
+
+    - name: Download oc client
+      ansible.builtin.unarchive:
+        src: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ ocp_client_channel }}/openshift-client-linux.tar.gz"
+        dest: "{{ installer_bin_dir }}"
+        remote_src: true
+        creates: "{{ installer_bin_dir }}/oc"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: Download openshift-install
+      ansible.builtin.unarchive:
+        src: "https://mirror.openshift.com/pub/openshift-v4/clients/ocp/{{ ocp_client_channel }}/openshift-install-linux.tar.gz"
+        dest: "{{ installer_bin_dir }}"
+        remote_src: true
+        creates: "{{ installer_bin_dir }}/openshift-install"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: Add installer bin dir to lab-user bashrc
+      ansible.builtin.lineinfile:
+        path: "/home/{{ ansible_user }}/.bashrc"
+        line: "export PATH={{ installer_bin_dir }}:$PATH"
+        create: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+
+    - name: Show installed versions
+      become: false
+      ansible.builtin.shell: |
+        set -e
+        export PATH={{ installer_bin_dir }}:$PATH
+        oc version --client=true
+        openshift-install version
+      changed_when: false

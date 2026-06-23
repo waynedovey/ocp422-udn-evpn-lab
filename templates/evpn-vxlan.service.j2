@@ -1,0 +1,19 @@
+[Unit]
+Description=Create lab EVPN VXLAN devices
+After=network-online.target
+Wants=network-online.target
+Before=frr.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ip link add br-evpn{{ evpn_mac_vrf_vni }} type bridge
+ExecStart=/usr/sbin/ip link set br-evpn{{ evpn_mac_vrf_vni }} up
+ExecStart=/usr/sbin/ip link add vxlan{{ evpn_mac_vrf_vni }} type vxlan id {{ evpn_mac_vrf_vni }} local {{ fabric_vtep_ip }} dstport 4789 nolearning
+ExecStart=/usr/sbin/ip link set vxlan{{ evpn_mac_vrf_vni }} master br-evpn{{ evpn_mac_vrf_vni }}
+ExecStart=/usr/sbin/ip link set vxlan{{ evpn_mac_vrf_vni }} up
+ExecStop=/usr/sbin/ip link del vxlan{{ evpn_mac_vrf_vni }}
+ExecStop=/usr/sbin/ip link del br-evpn{{ evpn_mac_vrf_vni }}
+
+[Install]
+WantedBy=multi-user.target

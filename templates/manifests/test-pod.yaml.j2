@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ cudn_namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: evpn-test
+  namespace: {{ cudn_namespace }}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: evpn-test
+  template:
+    metadata:
+      labels:
+        app: evpn-test
+    spec:
+      containers:
+      - name: test
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        command: ["/bin/sh", "-c", "sleep infinity"]

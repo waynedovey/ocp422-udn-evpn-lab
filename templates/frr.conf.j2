@@ -1,0 +1,30 @@
+frr defaults traditional
+hostname {{ site_id }}-fabric-frr
+log syslog informational
+service integrated-vtysh-config
+!
+router bgp {{ fabric_bgp_asn }}
+ bgp router-id {{ fabric_router_id }}
+ no bgp ebgp-requires-policy
+ neighbor OCP peer-group
+ neighbor OCP remote-as {{ ocp_bgp_asn }}
+{% for ip in ocp_node_ips %}
+ neighbor {{ ip }} peer-group OCP
+{% endfor %}
+ !
+ address-family ipv4 unicast
+{% for ip in ocp_node_ips %}
+  neighbor {{ ip }} activate
+{% endfor %}
+ exit-address-family
+ !
+ address-family l2vpn evpn
+  neighbor OCP activate
+  advertise-all-vni
+  vni {{ evpn_mac_vrf_vni }}
+   rd {{ fabric_bgp_asn }}:{{ evpn_mac_vrf_vni }}
+   route-target import {{ evpn_route_target_base }}:{{ evpn_mac_vrf_vni }}
+   route-target export {{ evpn_route_target_base }}:{{ evpn_mac_vrf_vni }}
+  exit-vni
+ exit-address-family
+!

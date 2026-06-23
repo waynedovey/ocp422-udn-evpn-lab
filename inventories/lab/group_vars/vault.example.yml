@@ -1,0 +1,17 @@
+---
+# Copy this file to vault.yml and encrypt it:
+#   cp inventories/lab/group_vars/vault.example.yml inventories/lab/group_vars/vault.yml
+#   ansible-vault encrypt inventories/lab/group_vars/vault.yml
+
+vault_site_a_bastion_password: "CHANGE-ME"
+vault_site_b_bastion_password: "CHANGE-ME"
+
+vault_site_a_vcenter_password: "CHANGE-ME"
+vault_site_b_vcenter_password: "CHANGE-ME"
+
+# Paste your Red Hat pull secret JSON as one line or a block scalar.
+vault_pull_secret: |-
+  {"auths":{}}
+
+# Public key only, not your private key.
+vault_ssh_public_key: "ssh-rsa CHANGE-ME lab-user"

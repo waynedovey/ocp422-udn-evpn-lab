@@ -1,0 +1,18 @@
+apiVersion: k8s.ovn.org/v1
+kind: RouteAdvertisements
+metadata:
+  name: {{ site_id }}-evpn-cudns
+spec:
+  targetVRF: auto
+  advertisements:
+  - PodNetwork
+  nodeSelector: {}
+  frrConfigurationSelector:
+    matchLabels:
+      evpn-lab/site: {{ site_id }}
+  networkSelectors:
+  - networkSelectionType: ClusterUserDefinedNetworks
+    clusterUserDefinedNetworkSelector:
+      networkSelector:
+        matchLabels:
+          {{ cudn_label_key }}: {{ cudn_label_value }}

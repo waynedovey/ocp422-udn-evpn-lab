@@ -1,0 +1,27 @@
+apiVersion: k8s.ovn.org/v1
+kind: ClusterUserDefinedNetwork
+metadata:
+  name: {{ cudn_name }}
+  labels:
+    {{ cudn_label_key }}: {{ cudn_label_value }}
+spec:
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: {{ cudn_namespace }}
+  network:
+    topology: Layer2
+    layer2:
+      role: Primary
+      subnets:
+      - {{ cudn_subnet }}
+    transport: EVPN
+    evpn:
+      vtep: {{ site_id }}-vtep
+      macVRF:
+        vni: {{ evpn_mac_vrf_vni }}
+        routeTarget: "{{ evpn_route_target_base }}:{{ evpn_mac_vrf_vni }}"
+{% if evpn_enable_ip_vrf | default(false) | bool %}
+      ipVRF:
+        vni: {{ evpn_ip_vrf_vni }}
+        routeTarget: "{{ evpn_route_target_base }}:{{ evpn_ip_vrf_vni }}"
+{% endif %}

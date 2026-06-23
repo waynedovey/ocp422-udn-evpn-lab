@@ -1,0 +1,49 @@
+---
+- name: Render OpenShift install-config.yaml on bastion
+  hosts: all
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Validate required vSphere install variables
+      ansible.builtin.assert:
+        that:
+          - vcenter_compute_cluster != 'CHANGE-ME'
+          - vcenter_datastore != 'CHANGE-ME'
+          - pull_secret is defined
+          - pull_secret | length > 20
+          - ssh_public_key is defined
+          - ssh_public_key | length > 20
+        fail_msg: >-
+          Fill vcenter_compute_cluster, vcenter_datastore, pull_secret and ssh_public_key first.
+          Run make discover SITE={{ site_id }} to list available vSphere values.
+
+    - name: Create install directory
+      ansible.builtin.file:
+        path: "{{ install_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0700'
+
+    - name: Render install-config.yaml
+      ansible.builtin.template:
+        src: ../templates/install-config.yaml.j2
+        dest: "{{ install_dir }}/install-config.yaml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      no_log: true
+
+    - name: Keep a backup because openshift-install consumes install-config.yaml
+      ansible.builtin.copy:
+        src: "{{ install_dir }}/install-config.yaml"
+        dest: "{{ install_dir }}/install-config.yaml.backup"
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0600'
+      no_log: true
+
+    - name: Confirm render location
+      ansible.builtin.debug:
+        msg: "Rendered {{ install_dir }}/install-config.yaml on {{ inventory_hostname }}. This file contains secrets; do not commit it."

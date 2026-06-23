@@ -1,0 +1,44 @@
+---
+- name: Discover vSphere objects for install-config
+  hosts: all
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Ensure govc is installed
+      ansible.builtin.unarchive:
+        src: "https://github.com/vmware/govmomi/releases/latest/download/govc_Linux_x86_64.tar.gz"
+        dest: "{{ installer_bin_dir }}"
+        remote_src: true
+        creates: "{{ installer_bin_dir }}/govc"
+        mode: '0755'
+
+    - name: Query vCenter inventory with govc
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export GOVC_URL="https://${GOVC_USERNAME}:${GOVC_PASSWORD}@{{ vcenter_server }}"
+        export GOVC_INSECURE=1
+        echo "# vCenter about"
+        govc about
+        echo
+        echo "# Compute clusters"
+        govc find /{{ vcenter_datacenter }}/host -type c || true
+        echo
+        echo "# Datastores"
+        govc find /{{ vcenter_datacenter }}/datastore -type s || true
+        echo
+        echo "# Networks matching {{ vsphere_network }}"
+        govc find /{{ vcenter_datacenter }}/network -name '{{ vsphere_network }}' || true
+        echo
+        echo "# Target folder"
+        govc find /{{ vcenter_datacenter }}/vm/Workloads -type f -name '{{ vcenter_folder | basename }}' || true
+      environment:
+        GOVC_USERNAME: "{{ vcenter_username }}"
+        GOVC_PASSWORD: "{{ vcenter_password }}"
+      register: govc_discovery
+      changed_when: false
+      no_log: true
+
+    - name: Print sanitized discovery output
+      ansible.builtin.debug:
+        msg: "{{ govc_discovery.stdout }}"

@@ -1,0 +1,60 @@
+---
+- name: Verify FRR, BGP EVPN and OpenShift UDN objects
+  hosts: all
+  become: true
+  gather_facts: false
+  tasks:
+    - name: OpenShift object status
+      become: false
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+        echo "# Nodes"
+        oc get nodes -o wide
+        echo
+        echo "# FRR-K8s pods"
+        oc -n openshift-frr-k8s get pods -o wide || true
+        echo
+        echo "# VTEP"
+        oc get vtep -o wide || true
+        echo
+        echo "# RouteAdvertisements"
+        oc get routeadvertisements -o yaml || true
+        echo
+        echo "# CUDN"
+        oc get clusteruserdefinednetwork {{ cudn_name }} -o yaml || true
+        echo
+        echo "# Test pods"
+        oc -n {{ cudn_namespace }} get pods -o wide || true
+      register: oc_status
+      changed_when: false
+
+    - name: Bastion FRR status
+      ansible.builtin.shell: |
+        set -euo pipefail
+        echo "# FRR service"
+        systemctl --no-pager --full status frr | sed -n '1,25p' || true
+        echo
+        echo "# BGP summary"
+        vtysh -c 'show bgp summary' || true
+        echo
+        echo "# EVPN summary"
+        vtysh -c 'show bgp l2vpn evpn summary' || true
+        echo
+        echo "# EVPN routes"
+        vtysh -c 'show bgp l2vpn evpn' || true
+        echo
+        echo "# Local VNI devices"
+        ip -d link show vxlan{{ evpn_mac_vrf_vni }} || true
+        bridge fdb show dev vxlan{{ evpn_mac_vrf_vni }} || true
+      register: frr_status
+      changed_when: false
+
+    - name: Print OpenShift status
+      ansible.builtin.debug:
+        msg: "{{ oc_status.stdout }}"
+
+    - name: Print FRR status
+      ansible.builtin.debug:
+        msg: "{{ frr_status.stdout }}"

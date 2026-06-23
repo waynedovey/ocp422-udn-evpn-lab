@@ -1,0 +1,57 @@
+apiVersion: v1
+baseDomain: {{ base_domain }}
+metadata:
+  name: {{ cluster_name }}
+compute:
+- name: worker
+  replicas: {{ compute_replicas }}
+  platform:
+    vsphere:
+      cpus: {{ compute_cpu }}
+      memoryMB: {{ compute_memory_mb }}
+controlPlane:
+  name: master
+  replicas: {{ control_plane_replicas }}
+  platform:
+    vsphere:
+      cpus: {{ control_plane_cpu }}
+      memoryMB: {{ control_plane_memory_mb }}
+networking:
+  networkType: {{ network_type }}
+  machineNetwork:
+  - cidr: {{ machine_network_cidr }}
+  clusterNetwork:
+  - cidr: {{ cluster_network_cidr }}
+    hostPrefix: {{ cluster_network_host_prefix }}
+  serviceNetwork:
+  - {{ service_network_cidr }}
+platform:
+  vsphere:
+    apiVIPs:
+    - {{ api_vip }}
+    ingressVIPs:
+    - {{ ingress_vip }}
+    vcenters:
+    - server: {{ vcenter_server }}
+      user: {{ vcenter_username | to_json }}
+      password: {{ vcenter_password | to_json }}
+      datacenters:
+      - {{ vcenter_datacenter }}
+    failureDomains:
+    - name: {{ site_id }}-fd
+      region: {{ site_id }}-region
+      zone: {{ site_id }}-zone
+      server: {{ vcenter_server }}
+      topology:
+        datacenter: {{ vcenter_datacenter }}
+        computeCluster: {{ vcenter_compute_cluster }}
+        datastore: {{ vcenter_datastore }}
+        networks:
+        - {{ vsphere_network }}
+        folder: {{ vcenter_folder }}
+{% if vcenter_resource_pool | length > 0 %}
+        resourcePool: {{ vcenter_resource_pool }}
+{% endif %}
+publish: External
+pullSecret: {{ pull_secret | to_json }}
+sshKey: {{ ssh_public_key | to_json }}

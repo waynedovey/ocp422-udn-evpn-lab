@@ -1,0 +1,65 @@
+---
+# This lab is for learning/simulation on vSphere. OpenShift 4.22 BGP EVPN for
+# primary CUDNs is documented as bare-metal only for supported deployments.
+ocp_version: "4.22.0"
+ocp_client_channel: "stable-4.22"
+
+# Paths on each bastion
+lab_root: "/home/lab-user/ocp422-udn-evpn-lab"
+installer_bin_dir: "/home/lab-user/bin"
+install_dir: "{{ lab_root }}/artifacts/{{ site_id }}"
+kubeconfig_path: "{{ install_dir }}/auth/kubeconfig"
+
+# OpenShift shape. 3-node compact is cleaner than 2-node for this lab.
+control_plane_replicas: 3
+compute_replicas: 0
+control_plane_cpu: 8
+control_plane_memory_mb: 24576
+compute_cpu: 8
+compute_memory_mb: 24576
+
+# Cluster networking defaults
+cluster_network_cidr: "10.128.0.0/14"
+cluster_network_host_prefix: 23
+service_network_cidr: "172.30.0.0/16"
+machine_network_cidr: "{{ subnet_cidr }}"
+network_type: "OVNKubernetes"
+
+# EVPN/BGP defaults
+ocp_bgp_asn: 64520
+fabric_bgp_asn: 64512
+# Use the site underlay subnet as the VTEP CIDR. This avoids dummy interfaces
+# in the VMware lab because node primary IPs are already in this subnet.
+evpn_vtep_cidr: "{{ subnet_cidr }}"
+evpn_route_target_base: "{{ ocp_bgp_asn }}"
+evpn_mac_vrf_vni: 10010
+evpn_ip_vrf_vni: 20010
+cudn_name: "tenant-a-l2"
+cudn_namespace: "tenant-a"
+cudn_subnet: "10.100.10.0/24"
+cudn_label_key: "evpn"
+cudn_label_value: "enabled"
+
+# The external FRR peer runs on the bastion in this lab.
+# The playbook discovers bastion_underlay_ip from the default IPv4 address.
+fabric_router_id: "{{ bastion_underlay_ip }}"
+fabric_vtep_ip: "{{ bastion_underlay_ip }}"
+
+# vSphere common settings. Fill the missing ones after discovery.
+vcenter_server: "vcsnsx-vc.infra.demo.redhat.com"
+vcenter_datacenter: "SDDC-Datacenter"
+vcenter_username: "{{ vault_vcenter_username }}"
+vcenter_password: "{{ vault_vcenter_password }}"
+
+# These must be discovered/finalized for your workshop vCenter.
+# Run: make discover SITE=site_a
+vcenter_compute_cluster: "CHANGE-ME"
+vcenter_datastore: "CHANGE-ME"
+vcenter_resource_pool: ""
+
+# Pull secret and SSH key should come from vault.yml.
+pull_secret: "{{ vault_pull_secret }}"
+ssh_public_key: "{{ vault_ssh_public_key }}"
+
+# vSphere portgroup security changes are optional and often not permitted in workshop sandboxes.
+configure_portgroup_security: false

@@ -1,0 +1,201 @@
+---
+- name: Configure OpenShift 4.22 UDN EVPN lab with FRR on bastion
+  hosts: all
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Set bastion underlay facts
+      ansible.builtin.set_fact:
+        bastion_underlay_ip: "{{ ansible_default_ipv4.address }}"
+
+    - name: Check kubeconfig exists
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_path }}"
+      register: kubeconfig_file
+
+    - name: Stop if kubeconfig missing
+      ansible.builtin.fail:
+        msg: "{{ kubeconfig_path }} does not exist. Install the cluster first or copy a valid kubeconfig there."
+      when: not kubeconfig_file.stat.exists
+
+    - name: Discover OpenShift node InternalIPs
+      become: false
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+        oc get nodes -o json | jq -r '.items[].status.addresses[] | select(.type=="InternalIP") | .address' | sort -u
+      register: node_ips_cmd
+      changed_when: false
+
+    - name: Save node IP list
+      ansible.builtin.set_fact:
+        ocp_node_ips: "{{ node_ips_cmd.stdout_lines }}"
+
+    - name: Validate discovered node IPs
+      ansible.builtin.assert:
+        that:
+          - ocp_node_ips | length > 0
+        fail_msg: "Could not discover any node InternalIP values from oc get nodes."
+
+    - name: Ensure FRR is installed
+      ansible.builtin.package:
+        name: frr
+        state: present
+
+    - name: Enable bgpd and zebra daemons
+      ansible.builtin.lineinfile:
+        path: /etc/frr/daemons
+        regexp: "^{{ item }}="
+        line: "{{ item }}=yes"
+      loop:
+        - zebra
+        - bgpd
+      notify: Restart frr
+
+    - name: Install EVPN VXLAN systemd unit for bastion fabric VNI
+      ansible.builtin.template:
+        src: ../templates/evpn-vxlan.service.j2
+        dest: /etc/systemd/system/evpn-vxlan.service
+        owner: root
+        group: root
+        mode: '0644'
+      notify:
+        - Reload systemd
+        - Restart evpn-vxlan
+        - Restart frr
+
+    - name: Render FRR config
+      ansible.builtin.template:
+        src: ../templates/frr.conf.j2
+        dest: /etc/frr/frr.conf
+        owner: frr
+        group: frr
+        mode: '0640'
+      notify: Restart frr
+
+    - name: Open BGP and VXLAN firewall ports if firewalld is running
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        immediate: true
+        state: enabled
+      loop:
+        - 179/tcp
+        - 4789/udp
+      failed_when: false
+
+    - name: Enable and start EVPN VXLAN and FRR
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      loop:
+        - evpn-vxlan
+        - frr
+
+    - name: Create manifest output directory
+      ansible.builtin.file:
+        path: "{{ lab_root }}/manifests/{{ site_id }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: Render OpenShift EVPN manifests
+      ansible.builtin.template:
+        src: "../templates/manifests/{{ item }}.yaml.j2"
+        dest: "{{ lab_root }}/manifests/{{ site_id }}/{{ item }}.yaml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0644'
+      loop:
+        - vtep
+        - frrconfiguration
+        - routeadvertisements
+        - cudn
+
+    - name: Enable FRR-K8s and OVN route advertisements in OpenShift
+      become: false
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+        oc patch Network.operator.openshift.io cluster --type=merge -p='{
+          "spec": {
+            "additionalRoutingCapabilities": {
+              "providers": ["FRR"]
+            },
+            "defaultNetwork": {
+              "ovnKubernetesConfig": {
+                "routeAdvertisements": "Enabled",
+                "gatewayConfig": {
+                  "routingViaHost": true,
+                  "ipForwarding": "Global"
+                }
+              }
+            }
+          }
+        }'
+      register: patch_network
+      changed_when: "'patched' in patch_network.stdout or 'configured' in patch_network.stdout"
+
+    - name: Wait for FRR-K8s namespace to exist
+      become: false
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+        oc get ns openshift-frr-k8s
+      register: frr_ns
+      retries: 30
+      delay: 10
+      until: frr_ns.rc == 0
+      changed_when: false
+
+    - name: Apply VTEP, FRRConfiguration, RouteAdvertisements and CUDN
+      become: false
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+        oc apply -f {{ lab_root }}/manifests/{{ site_id }}/vtep.yaml
+        oc apply -f {{ lab_root }}/manifests/{{ site_id }}/frrconfiguration.yaml
+        oc apply -f {{ lab_root }}/manifests/{{ site_id }}/routeadvertisements.yaml
+        oc create ns {{ cudn_namespace }} --dry-run=client -o yaml | oc apply -f -
+        oc apply -f {{ lab_root }}/manifests/{{ site_id }}/cudn.yaml
+      register: apply_evpn
+      changed_when: "'created' in apply_evpn.stdout or 'configured' in apply_evpn.stdout"
+
+    - name: Show basic EVPN object status
+      become: false
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+        oc get vtep
+        oc get routeadvertisements
+        oc get clusteruserdefinednetwork
+      register: evpn_status
+      changed_when: false
+
+    - name: Print EVPN status
+      ansible.builtin.debug:
+        msg: "{{ evpn_status.stdout }}"
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart evpn-vxlan
+      ansible.builtin.systemd:
+        name: evpn-vxlan
+        state: restarted
+        daemon_reload: true
+
+    - name: Restart frr
+      ansible.builtin.systemd:
+        name: frr
+        state: restarted
