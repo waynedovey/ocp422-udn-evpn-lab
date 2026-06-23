@@ -213,3 +213,28 @@ oc -n tenant-a get pods -o wide
 - This repo builds per-site EVPN labs. It does not assume Site-A and Site-B have routed private connectivity between `192.168.69.0/24` and `192.168.70.0/24`.
 - Cross-site EVPN would require a routed underlay between sites, for example WireGuard/IPsec between bastions plus node/VTEP route handling.
 - The default lab focuses on MAC-VRF/L2 VNI. IP-VRF/L3 VNI can be enabled later with `evpn_enable_ip_vrf: true`, but the external FRR L3 gateway configuration then needs to be completed properly.
+
+## Working Inter-Site EVPN Design
+
+This lab uses two OpenShift clusters connected through bastion FRR routers to prove inter-site EVPN behaviour for a primary `ClusterUserDefinedNetwork`.
+
+The final working design uses different OpenShift FRR-K8s ASNs per site, but a shared EVPN route target.
+
+| Component | Site-A | Site-B |
+|---|---:|---:|
+| Bastion / fabric ASN | `64512` | `64512` |
+| OpenShift FRR-K8s ASN | `64520` | `64521` |
+| EVPN route target | `64520:10010` | `64520:10010` |
+| EVPN VNI | `10010` | `10010` |
+| Tenant subnet | `10.100.10.0/24` | `10.100.10.0/24` |
+| Underlay subnet | `192.168.69.0/24` | `192.168.70.0/24` |
+| Bastion underlay IP | `192.168.69.10` | `192.168.70.10` |
+
+### Key design notes
+
+Site-B uses `ocp_bgp_asn: 64521` so that remote EVPN routes are not rejected by BGP AS loop prevention.
+
+The EVPN route target remains shared across both sites:
+
+```yaml
+evpn_route_target_base: 64520
