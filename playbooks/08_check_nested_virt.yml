@@ -1,0 +1,76 @@
+---
+- name: Check nested virtualization availability on OpenShift nodes
+  hosts: all
+  become: false
+  gather_facts: false
+  vars:
+    nested_virt_required: false
+  tasks:
+    - name: Check /dev/kvm and CPU virtualization flags on each node
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+
+        missing=0
+
+        echo "# Nested virtualization check"
+        echo "Site: {{ site_id }}"
+        echo
+
+        for n in $(oc get nodes -o name); do
+          echo "===== $n ====="
+
+          out=$(oc debug "$n" -- chroot /host bash -c '
+            echo "# CPU virtualization flags"
+            if egrep -m1 "vmx|svm" /proc/cpuinfo >/dev/null; then
+              egrep -m1 "vmx|svm" /proc/cpuinfo | sed "s/^/flags: /"
+            else
+              echo "flags: MISSING"
+            fi
+
+            echo "# KVM device"
+            if [ -e /dev/kvm ]; then
+              ls -l /dev/kvm
+            else
+              echo "/dev/kvm: MISSING"
+            fi
+          ' 2>/dev/null || true)
+
+          echo "$out"
+          echo
+
+          if echo "$out" | grep -q "/dev/kvm: MISSING"; then
+            missing=1
+          fi
+        done
+
+        if [ "$missing" -eq 0 ]; then
+          echo "NESTED_VIRT_STATUS=OK"
+          echo "Nested virtualization is available on all nodes."
+        else
+          echo "NESTED_VIRT_STATUS=MISSING"
+          echo "Nested virtualization is missing on one or more nodes."
+          echo "Enable nested virtualization on the VMware VMs before running OpenShift Virtualization workloads."
+        fi
+      register: nested_virt_check
+      changed_when: false
+
+    - name: Print nested virtualization status
+      ansible.builtin.debug:
+        msg: "{{ nested_virt_check.stdout }}"
+
+    - name: Fail when nested virtualization is required but missing
+      ansible.builtin.fail:
+        msg: |
+          Nested virtualization is required but /dev/kvm is missing on one or more nodes.
+
+          Fix in VMware:
+          - Power off each OpenShift node VM one at a time
+          - Enable: Expose hardware assisted virtualization to the guest OS
+          - Power the VM back on
+          - Wait for the OpenShift node to become Ready
+          - Re-run: make nested-check SITE={{ site_id }}
+      when:
+        - nested_virt_required | bool
+        - "'NESTED_VIRT_STATUS=MISSING' in nested_virt_check.stdout"

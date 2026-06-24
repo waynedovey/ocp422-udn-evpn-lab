@@ -1,6 +1,6 @@
 # OpenShift 4.22 UDN EVPN Lab
 
-A hands-on lab for building and validating an inter-site EVPN fabric for OpenShift 4.22 using:
+A hands-on lab for building and validating a stretched tenant Layer 2 network across two OpenShift 4.22 clusters using:
 
 - `ClusterUserDefinedNetwork`
 - OVN-Kubernetes primary UDN
@@ -9,19 +9,18 @@ A hands-on lab for building and validating an inter-site EVPN fabric for OpenShi
 - BGP EVPN
 - OpenShift Virtualization
 - Kubernetes NMState
+- VMware nested virtualization
 
-The goal is to prove a stretched tenant Layer 2 network across two OpenShift clusters using a shared EVPN VNI and route target.
-
-This lab first proves pod-to-pod connectivity across sites. The next phase extends the same tenant network to OpenShift Virtualization VMs.
+The lab first proves pod-to-pod connectivity across sites. It then extends the same tenant network to virtual machines running on OpenShift Virtualization.
 
 ---
 
 ## Lab Goal
 
-This lab proves the following pattern:
+The goal is to prove that a single tenant Layer 2 network can exist across two separate OpenShift clusters using a shared EVPN VNI and route target.
 
 ```text
-Site-A VM / Pod
+Site-A Pod / VM
 10.100.10.x
    |
 Primary UDN / ovn-udn1
@@ -39,7 +38,7 @@ Site-B FRR-K8s ASN 64521
    |
 Primary UDN / ovn-udn1
    |
-Site-B VM / Pod
+Site-B Pod / VM
 10.100.10.y
 ```
 
@@ -47,7 +46,7 @@ This is best described as:
 
 > **A stretched tenant Layer 2 network over EVPN.**
 
-It is not the same thing as stretching a physical VMware VLAN end-to-end.
+It is not the same as stretching a physical VMware VLAN end-to-end.
 
 ---
 
@@ -58,7 +57,7 @@ flowchart LR
     subgraph SITEA["Site-A / OpenShift Cluster 9wnp4"]
         A_NS["Namespace: tenant-a<br/>Primary UDN enabled"]
         A_POD["Test Pod<br/>10.100.10.14<br/>ovn-udn1"]
-        A_VM["Future Test VM<br/>10.100.10.x<br/>l2bridge / primary UDN"]
+        A_VM["Test VM<br/>site-a-udn-vm<br/>cloud-user / redhat<br/>10.100.10.x"]
         A_NODES["OpenShift Nodes<br/>192.168.69.41<br/>192.168.69.137<br/>192.168.69.138"]
         A_FRRK8S["FRR-K8s<br/>OCP ASN 64520"]
         A_BASTION["Bastion FRR<br/>192.168.69.10<br/>Fabric ASN 64512"]
@@ -81,7 +80,7 @@ flowchart LR
         B_NODES["OpenShift Nodes<br/>192.168.70.41<br/>192.168.70.73<br/>192.168.70.137"]
         B_NS["Namespace: tenant-a<br/>Primary UDN enabled"]
         B_POD["Test Pod<br/>10.100.10.9 / 10.100.10.11<br/>ovn-udn1"]
-        B_VM["Future Test VM<br/>10.100.10.y<br/>l2bridge / primary UDN"]
+        B_VM["Test VM<br/>site-b-udn-vm<br/>cloud-user / redhat<br/>10.100.10.y"]
 
         B_BASTION --> B_FRRK8S
         B_FRRK8S --> B_NODES
@@ -94,13 +93,13 @@ flowchart LR
     A_BASTION <-->|"iBGP EVPN<br/>64512 ↔ 64512"| FABRIC
     FABRIC <-->|"iBGP EVPN<br/>64512 ↔ 64512"| B_BASTION
 
-    A_POD <-. "Validated cross-site pod ping" .-> B_POD
-    A_VM <-. "Next phase: cross-site VM ping" .-> B_VM
+    A_POD <-. "Validated pod-to-pod ping" .-> B_POD
+    A_VM <-. "Validated VM-to-VM ping" .-> B_VM
 ```
 
 ---
 
-## Final Working EVPN Design
+## Final Working Design
 
 | Component | Site-A | Site-B |
 |---|---:|---:|
@@ -114,6 +113,9 @@ flowchart LR
 | EVPN route target | `64520:10010` | `64520:10010` |
 | Tenant namespace | `tenant-a` | `tenant-a` |
 | Tenant subnet | `10.100.10.0/24` | `10.100.10.0/24` |
+| Test VM | `site-a-udn-vm` | `site-b-udn-vm` |
+| VM username | `cloud-user` | `cloud-user` |
+| VM password | `redhat` | `redhat` |
 
 ---
 
@@ -141,7 +143,7 @@ The OpenShift ASNs are different, but the EVPN route target stays the same:
 64520:10010
 ```
 
-That shared route target is what lets both clusters import and export the same tenant EVPN network.
+That shared route target lets both clusters import and export the same tenant EVPN network.
 
 ---
 
@@ -194,6 +196,10 @@ ocp422-udn-evpn-lab/
 │   ├── 07_verify.yml
 │   ├── 08_check_nested_virt.yml
 │   ├── 09_enable_nested_virt_vmware.yml
+│   ├── 10_install_virtualization.yml
+│   ├── 11_install_nmstate.yml
+│   ├── 12_deploy_udn_vms.yml
+│   ├── 13_verify_udn_vms.yml
 │   └── 99_destroy_cluster.yml
 └── templates/
     ├── install-config.yaml.j2
@@ -211,7 +217,7 @@ ocp422-udn-evpn-lab/
 
 ## Current Validated State
 
-The pod-based EVPN lab has been validated successfully.
+The EVPN lab has been validated successfully for both pods and VMs.
 
 ```text
 Site-A local EVPN:        Working
@@ -220,6 +226,7 @@ Site-A <-> Site-B BGP:    Established
 Remote VTEP reachability: Working
 Remote Type-2 routes:     Learned by bastions and node FRR pods
 Pod-to-pod UDN ping:      Working both ways
+VM-to-VM UDN ping:        Working both ways
 ```
 
 Validated pod traffic:
@@ -229,33 +236,17 @@ Site-A pod 10.100.10.14 -> Site-B pod 10.100.10.9: success
 Site-B pod 10.100.10.11 -> Site-A pod 10.100.10.14: success
 ```
 
+Validated VM traffic:
+
+```text
+Site-A VM 10.100.10.x -> Site-B VM 10.100.10.y: success
+Site-B VM 10.100.10.y -> Site-A VM 10.100.10.x: success
+```
+
 Expected result:
 
 ```text
 3 packets transmitted, 3 received, 0% packet loss
-```
-
----
-
-## Current Nested Virtualization State
-
-Nested virtualization has been checked on both clusters.
-
-Current result:
-
-```text
-CPU virtualization flags: MISSING
-/dev/kvm: MISSING
-```
-
-This means OpenShift Virtualization can be installed, but VM workloads will not run with hardware acceleration until VMware exposes nested virtualization to the OpenShift node VMs.
-
-Expected fixed result:
-
-```text
-CPU virtualization flags: vmx or svm present
-/dev/kvm: present
-NESTED_VIRT_STATUS=OK
 ```
 
 ---
@@ -274,8 +265,14 @@ NESTED_VIRT_STATUS=OK
 | `nested-status` | `make nested-status SITE=site_a` | Check nested virtualization without failing the run. |
 | `nested-check` | `make nested-check SITE=site_a` | Strict nested virtualization check. Fails if `/dev/kvm` is missing. |
 | `nested-enable` | `make nested-enable SITE=site_a CONFIRM_NESTED_ENABLE=true` | Enable VMware nested virtualization one node at a time. |
+| `virt` | `make virt SITE=site_a` | Install OpenShift Virtualization. |
+| `nmstate` | `make nmstate SITE=site_a` | Install Kubernetes NMState Operator. |
+| `vms` | `make vms SITE=site_a` | Deploy test VM attached to the primary UDN. |
+| `verify-vms` | `make verify-vms SITE=site_a` | Verify VM, VM IP and EVPN route state. |
 | `destroy` | `make destroy SITE=site_a CONFIRM_DESTROY=true` | Destroy one OpenShift cluster. |
 | `destroy-all` | `make destroy-all CONFIRM_DESTROY=true` | Destroy both OpenShift clusters. |
+
+> `$(SITE)` is a Makefile variable. In the shell, use `make virt SITE=site_a`, not `echo $(SITE)`.
 
 ---
 
@@ -291,6 +288,11 @@ make install SITE=site_a
 make evpn SITE=site_a
 make test SITE=site_a
 make verify SITE=site_a
+make nested-check SITE=site_a
+make virt SITE=site_a
+make nmstate SITE=site_a
+make vms SITE=site_a
+make verify-vms SITE=site_a
 ```
 
 ### Site-B
@@ -303,6 +305,11 @@ make install SITE=site_b
 make evpn SITE=site_b
 make test SITE=site_b
 make verify SITE=site_b
+make nested-check SITE=site_b
+make virt SITE=site_b
+make nmstate SITE=site_b
+make vms SITE=site_b
+make verify-vms SITE=site_b
 ```
 
 ---
@@ -311,54 +318,14 @@ make verify SITE=site_b
 
 The `verify` target checks the status of a deployed site.
 
-### Basic Usage
-
 ```bash
 make verify SITE=site_a
 make verify SITE=site_b
 ```
 
-By default, `verify` shows:
+By default, `verify` hides the `kubeadmin` password.
 
-- Cluster status
-- EVPN status
-- OpenShift Console URL
-- `kubeadmin` username
-- Hidden password message
-
-The `kubeadmin` password is hidden by default so it is not accidentally leaked into terminal history, screenshots, Slack, Git commits, or support case logs.
-
-### Options
-
-| Option | Default | Example | Description |
-|---|---:|---|---|
-| `SITE` | `site_a` | `SITE=site_b` | Selects which site to verify. |
-| `SHOW_KUBEADMIN_PASSWORD` | `false` | `SHOW_KUBEADMIN_PASSWORD=true` | Prints the `kubeadmin` password during verify. |
-
-### Show Console URL and Username
-
-```bash
-make verify SITE=site_a
-make verify SITE=site_b
-```
-
-Expected output includes:
-
-```text
-# Cluster access
-Console URL:
-https://console-openshift-console.apps.<cluster>.<base-domain>
-
-Username:
-kubeadmin
-
-Password:
-hidden - run: make verify SITE=<site> SHOW_KUBEADMIN_PASSWORD=true
-```
-
-### Show kubeadmin Password
-
-Only use this when you really need the password:
+To show it when required:
 
 ```bash
 make verify SITE=site_a SHOW_KUBEADMIN_PASSWORD=true
@@ -367,11 +334,9 @@ make verify SITE=site_b SHOW_KUBEADMIN_PASSWORD=true
 
 ---
 
-## Nested Virtualization Checks
+## Nested Virtualization
 
-### Warning-Only Status Check
-
-Use this when you want to see the status but not fail the command:
+### Status Check
 
 ```bash
 make nested-status SITE=site_a
@@ -380,20 +345,9 @@ make nested-status SITE=site_b
 
 ### Strict Check
 
-Use this before installing OpenShift Virtualization or running VMs:
-
 ```bash
 make nested-check SITE=site_a
 make nested-check SITE=site_b
-```
-
-If nested virtualization is missing, this target fails intentionally.
-
-Expected failure:
-
-```text
-NESTED_VIRT_STATUS=MISSING
-Nested virtualization is required but /dev/kvm is missing on one or more nodes.
 ```
 
 Expected success:
@@ -403,51 +357,21 @@ NESTED_VIRT_STATUS=OK
 Nested virtualization is available on all nodes.
 ```
 
----
+Expected failure:
 
-## Enable Nested Virtualization on VMware
+```text
+NESTED_VIRT_STATUS=MISSING
+/dev/kvm: MISSING
+```
 
-Nested virtualization must be enabled on the VMware VMs that run the OpenShift nodes.
-
-The automated target powers off and updates one OpenShift node VM at a time.
-
-> **Warning**
->
-> These clusters are compact control-plane clusters. Do not power off all nodes at once.
-
-### Enable on Site-A
+### Enable Nested Virtualization on VMware
 
 ```bash
 make nested-enable SITE=site_a CONFIRM_NESTED_ENABLE=true
-make nested-check SITE=site_a
-```
-
-### Enable on Site-B
-
-```bash
 make nested-enable SITE=site_b CONFIRM_NESTED_ENABLE=true
-make nested-check SITE=site_b
 ```
 
-### Enable on One Node First
-
-This is safer when testing the automation:
-
-```bash
-ansible-playbook playbooks/09_enable_nested_virt_vmware.yml \
-  --limit site_a \
-  --ask-vault-pass \
-  -e confirm_nested_enable=true \
-  -e nested_virt_nodes=9wnp4-gll82-master-0
-```
-
-Then verify:
-
-```bash
-make nested-check SITE=site_a
-```
-
-The playbook does the following for each node:
+The playbook updates one OpenShift node VM at a time:
 
 ```text
 1. Cordon OpenShift node
@@ -460,56 +384,123 @@ The playbook does the following for each node:
 8. Continue to next node
 ```
 
----
-
-## OpenShift Virtualization and NMState Phase
-
-After nested virtualization is working, the next phase is:
-
-```text
-1. Install OpenShift Virtualization on Site-A and Site-B
-2. Install Kubernetes NMState Operator on Site-A and Site-B
-3. Deploy one test VM on Site-A attached to the primary UDN
-4. Deploy one test VM on Site-B attached to the primary UDN
-5. Confirm both VMs receive addresses from 10.100.10.0/24
-6. Ping VM-to-VM across the EVPN fabric
-```
-
-Recommended future Make targets:
-
-```makefile
-virt:
-	ansible-playbook playbooks/10_install_virtualization.yml --limit $(SITE) --ask-vault-pass
-
-nmstate:
-	ansible-playbook playbooks/11_install_nmstate.yml --limit $(SITE) --ask-vault-pass
-
-vms:
-	ansible-playbook playbooks/12_deploy_udn_vms.yml --limit $(SITE) --ask-vault-pass
-
-verify-vms:
-	ansible-playbook playbooks/13_verify_udn_vms.yml --limit $(SITE) --ask-vault-pass
-```
+Do not power off all compact control-plane nodes at the same time.
 
 ---
 
-## VM Stretch Goal
+## OpenShift Virtualization
 
-The next validation target is:
+Install OpenShift Virtualization:
 
-| VM | Site | Expected network |
-|---|---|---|
-| `site-a-udn-vm` | Site-A | `10.100.10.x/24` on primary UDN |
-| `site-b-udn-vm` | Site-B | `10.100.10.y/24` on primary UDN |
-
-Expected result:
-
-```text
-site-a-udn-vm -> site-b-udn-vm: success
-site-b-udn-vm -> site-a-udn-vm: success
+```bash
+make virt SITE=site_a
+make virt SITE=site_b
 ```
 
-This proves the tenant L2 network is stretched across clusters for VM workloads, not only pod workloads.
+If nested virtualization is not yet enabled and you only want to install the operator, bypass the strict check:
+
+```bash
+make virt SITE=site_a SKIP_NESTED_CHECK=true
+make virt SITE=site_b SKIP_NESTED_CHECK=true
+```
+
+VM workloads require `/dev/kvm` to be present on the OpenShift nodes.
+
+---
+
+## Kubernetes NMState
+
+Install NMState:
+
+```bash
+make nmstate SITE=site_a
+make nmstate SITE=site_b
+```
+
+NMState is included to support node network inspection and future localnet / physical bridge mapping work.
+
+---
+
+## UDN Test VMs
+
+Deploy the test VMs:
+
+```bash
+make vms SITE=site_a
+make vms SITE=site_b
+```
+
+VM details:
+
+| Site | VM name | Username | Password |
+|---|---|---|---|
+| Site-A | `site-a-udn-vm` | `cloud-user` | `redhat` |
+| Site-B | `site-b-udn-vm` | `cloud-user` | `redhat` |
+
+The VM cloud-init configuration must include:
+
+```yaml
+cloudInitNoCloud:
+  userData: |
+    #cloud-config
+    password: redhat
+    chpasswd:
+      expire: false
+    ssh_pwauth: true
+    users:
+    - name: cloud-user
+      sudo: ALL=(ALL) NOPASSWD:ALL
+      shell: /bin/bash
+```
+
+Open a console:
+
+```bash
+virtctl console site-a-udn-vm -n tenant-a
+virtctl console site-b-udn-vm -n tenant-a
+```
+
+Login:
+
+```text
+cloud-user / redhat
+```
+
+---
+
+## VM Validation
+
+Check VM status and IPs:
+
+```bash
+make verify-vms SITE=site_a
+make verify-vms SITE=site_b
+```
+
+Once both VM IPs are known, verify from the opposite site:
+
+```bash
+make verify-vms SITE=site_a REMOTE_VM_IP=<site-b-vm-ip>
+make verify-vms SITE=site_b REMOTE_VM_IP=<site-a-vm-ip>
+```
+
+Manual console test:
+
+```bash
+virtctl console site-a-udn-vm -n tenant-a
+ping -c 3 <site-b-vm-ip>
+```
+
+```bash
+virtctl console site-b-udn-vm -n tenant-a
+ping -c 3 <site-a-vm-ip>
+```
+
+Expected:
+
+```text
+3 packets transmitted, 3 received, 0% packet loss
+```
 
 ---
 
@@ -543,42 +534,24 @@ Site-B OCP node peers: AS 64521 up
 Site-A <-> Site-B bastion peer: AS 64512 up
 ```
 
-### Site-A Should Learn Site-B Routes
+### Remote EVPN Routes
+
+Site-A should learn Site-B routes:
 
 ```bash
 ansible site-a-bastion \
   -m shell \
-  -a 'sudo vtysh -c "show bgp l2vpn evpn" | egrep "192.168.70|10.100.10.9|10.100.10.11|RT:64520:10010"' \
+  -a 'sudo vtysh -c "show bgp l2vpn evpn" | egrep "192.168.70|10.100.10|RT:64520:10010"' \
   --ask-vault-pass -o
 ```
 
-Expected routes include:
-
-```text
-10.100.10.9
-10.100.10.11
-192.168.70.41
-192.168.70.73
-192.168.70.137
-```
-
-### Site-B Should Learn Site-A Routes
+Site-B should learn Site-A routes:
 
 ```bash
 ansible site-b-bastion \
   -m shell \
-  -a 'sudo vtysh -c "show bgp l2vpn evpn" | egrep "192.168.69|10.100.10.12|10.100.10.14|RT:64520:10010"' \
+  -a 'sudo vtysh -c "show bgp l2vpn evpn" | egrep "192.168.69|10.100.10|RT:64520:10010"' \
   --ask-vault-pass -o
-```
-
-Expected routes include:
-
-```text
-10.100.10.12
-10.100.10.14
-192.168.69.41
-192.168.69.137
-192.168.69.138
 ```
 
 ---
@@ -603,12 +576,6 @@ ansible site-b-bastion \
   --ask-vault-pass -o
 ```
 
-Expected:
-
-```text
-3 packets transmitted, 3 received, 0% packet loss
-```
-
 ---
 
 ## Cluster Teardown
@@ -630,12 +597,6 @@ Destroy both sites and remove install artifacts from the bastions:
 
 ```bash
 make destroy-all CONFIRM_DESTROY=true CLEAN_ARTIFACTS=true
-```
-
-The destroy target uses:
-
-```bash
-openshift-install destroy cluster --dir <install_dir>
 ```
 
 The destroy playbook refuses to run unless `CONFIRM_DESTROY=true` is provided.
@@ -666,18 +627,9 @@ Check that the remote underlay route exists.
 
 Check remote Type-2 EVPN routes.
 
-Site-A should learn Site-B pod or VM routes:
-
 ```bash
 oc -n openshift-frr-k8s exec <frr-pod> -c frr -- \
-  vtysh -c "show bgp l2vpn evpn" | egrep "10.100.10.9|10.100.10.11"
-```
-
-Site-B should learn Site-A pod or VM routes:
-
-```bash
-oc -n openshift-frr-k8s exec <frr-pod> -c frr -- \
-  vtysh -c "show bgp l2vpn evpn" | egrep "10.100.10.12|10.100.10.14"
+  vtysh -c "show bgp l2vpn evpn" | egrep "10.100.10"
 ```
 
 Check:
@@ -708,7 +660,7 @@ If the CUDN must change, delete and recreate it only when it is safe to disrupt 
 
 ### OpenShift Virtualization VMs Do Not Start
 
-Check nested virtualization first:
+Check nested virtualization:
 
 ```bash
 make nested-check SITE=site_a
@@ -716,6 +668,29 @@ make nested-check SITE=site_b
 ```
 
 If `/dev/kvm` is missing, enable nested virtualization on the VMware node VMs.
+
+### VM Console Login Does Not Work
+
+Confirm `playbooks/12_deploy_udn_vms.yml` includes:
+
+```yaml
+users:
+- name: cloud-user
+```
+
+Then recreate the VM if needed:
+
+```bash
+oc delete vm site-a-udn-vm -n tenant-a
+make vms SITE=site_a
+```
+
+or:
+
+```bash
+oc delete vm site-b-udn-vm -n tenant-a
+make vms SITE=site_b
+```
 
 ---
 
@@ -747,18 +722,25 @@ pull-secret.json
 
 ## Final Known Good Result
 
-The current lab proves end-to-end EVPN UDN connectivity for pods across two OpenShift clusters:
+The lab proves end-to-end EVPN UDN connectivity across two OpenShift clusters for both pods and VMs:
 
 ```text
-Site-A pod 10.100.10.14 -> Site-B pod 10.100.10.9: success
-Site-B pod 10.100.10.11 -> Site-A pod 10.100.10.14: success
+Site-A pod -> Site-B pod: success
+Site-B pod -> Site-A pod: success
+Site-A VM  -> Site-B VM:  success
+Site-B VM  -> Site-A VM:  success
 ```
 
-The next milestone is to prove the same pattern with VMs:
+Both VM directions passed across the shared tenant network:
 
 ```text
-Site-A VM 10.100.10.x -> Site-B VM 10.100.10.y
-Site-B VM 10.100.10.y -> Site-A VM 10.100.10.x
+Primary UDN: ovn-udn1
+VNI: 10010
+Route Target: 64520:10010
+Tenant subnet: 10.100.10.0/24
+VM username: cloud-user
+VM password: redhat
+Result: 0% packet loss
 ```
 
-That will confirm the tenant Layer 2 network is stretched across both OpenShift clusters for both pods and virtual machines.
+This confirms the tenant Layer 2 network is stretched across both OpenShift clusters for both pods and virtual machines.

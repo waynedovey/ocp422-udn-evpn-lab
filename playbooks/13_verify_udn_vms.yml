@@ -1,0 +1,69 @@
+---
+- name: Verify UDN virtual machines
+  hosts: all
+  become: false
+  gather_facts: false
+  vars:
+    udn_vm_namespace: "{{ cudn_namespace | default('tenant-a') }}"
+    udn_vm_name: "{{ site_id | replace('_', '-') }}-udn-vm"
+    remote_vm_ip: ""
+  tasks:
+    - name: Verify VM and EVPN state
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+
+        echo "# UDN VM verification"
+        echo "Site: {{ site_id }}"
+        echo "Namespace: {{ udn_vm_namespace }}"
+        echo "VM: {{ udn_vm_name }}"
+        echo
+
+        echo "## VM status"
+        oc get vm -n {{ udn_vm_namespace }} {{ udn_vm_name }} || true
+        oc get vmi -n {{ udn_vm_namespace }} {{ udn_vm_name }} -o wide || true
+
+        echo
+        echo "## VMI interfaces"
+        local_ip="$(oc get vmi -n {{ udn_vm_namespace }} {{ udn_vm_name }} -o jsonpath='{.status.interfaces[0].ipAddress}' 2>/dev/null || true)"
+        oc get vmi -n {{ udn_vm_namespace }} {{ udn_vm_name }} -o jsonpath='{range .status.interfaces[*]}name={.name} ip={.ipAddress} mac={.mac}{"\n"}{end}' || true
+        echo
+
+        echo "LOCAL_VM_IP=$local_ip"
+        echo
+
+        echo "## EVPN routes containing 10.100.10"
+        sudo vtysh -c "show bgp l2vpn evpn" | egrep "10.100.10|RT:64520:10010" || true
+        echo
+
+        if [ -n "{{ remote_vm_ip | default('') }}" ]; then
+          echo "## Optional remote VM ping from tenant test pod"
+          echo "Remote VM IP: {{ remote_vm_ip }}"
+
+          pod="$(oc -n {{ udn_vm_namespace }} get pods -l app=evpn-test --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+
+          if [ -z "$pod" ]; then
+            echo "No running app=evpn-test pod found in {{ udn_vm_namespace }}."
+            echo "Run: make test SITE={{ site_id }}"
+            exit 1
+          fi
+
+          oc -n {{ udn_vm_namespace }} exec "$pod" -- ping -I ovn-udn1 -c 3 "{{ remote_vm_ip }}"
+        else
+          echo "REMOTE_VM_IP was not provided."
+          echo
+          echo "After both VMs are running, get the remote VM IP from the other site and run:"
+          echo "  make verify-vms SITE={{ site_id }} REMOTE_VM_IP=<remote-vm-ip>"
+        fi
+
+        echo
+        echo "## Manual VM console"
+        echo "Use this if you want to ping VM-to-VM from inside the guest:"
+        echo "  virtctl console {{ udn_vm_name }} -n {{ udn_vm_namespace }}"
+      register: udn_vm_verify
+      changed_when: false
+
+    - name: Print UDN VM verification result
+      ansible.builtin.debug:
+        msg: "{{ udn_vm_verify.stdout }}"

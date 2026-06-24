@@ -1,0 +1,115 @@
+---
+- name: Deploy UDN test virtual machine
+  hosts: all
+  become: false
+  gather_facts: false
+  vars:
+    udn_vm_namespace: "{{ cudn_namespace | default('tenant-a') }}"
+    udn_vm_name: "{{ site_id | replace('_', '-') }}-udn-vm"
+  tasks:
+    - name: Deploy VM attached to primary UDN using l2bridge
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+
+        echo "# Deploying UDN test VM"
+        echo "Site: {{ site_id }}"
+        echo "Namespace: {{ udn_vm_namespace }}"
+        echo "VM name: {{ udn_vm_name }}"
+        echo
+
+        echo "Checking OpenShift Virtualization..."
+        oc get hco kubevirt-hyperconverged -n openshift-cnv
+
+        echo
+        echo "Checking namespace primary UDN label..."
+        oc get ns {{ udn_vm_namespace }} -o jsonpath='{.metadata.labels.k8s\.ovn\.org/primary-user-defined-network}{"\n"}' || true
+
+        cat <<'MANIFEST' | oc apply -f -
+        apiVersion: kubevirt.io/v1
+        kind: VirtualMachine
+        metadata:
+          name: {{ udn_vm_name }}
+          namespace: {{ udn_vm_namespace }}
+          labels:
+            app: udn-vm
+            site: {{ site_id | replace('_', '-') }}
+        spec:
+          running: true
+          template:
+            metadata:
+              labels:
+                kubevirt.io/domain: {{ udn_vm_name }}
+                app: udn-vm
+                site: {{ site_id | replace('_', '-') }}
+            spec:
+              terminationGracePeriodSeconds: 0
+              domain:
+                cpu:
+                  cores: 1
+                resources:
+                  requests:
+                    memory: 1Gi
+                devices:
+                  disks:
+                  - name: containerdisk
+                    disk:
+                      bus: virtio
+                  - name: cloudinitdisk
+                    disk:
+                      bus: virtio
+                  interfaces:
+                  - name: udn-l2-net
+                    binding:
+                      name: l2bridge
+              networks:
+              - name: udn-l2-net
+                pod: {}
+              volumes:
+              - name: containerdisk
+                containerDisk:
+                  image: quay.io/containerdisks/fedora:latest
+              - name: cloudinitdisk
+                cloudInitNoCloud:
+                  userData: |
+                    #cloud-config
+                    password: redhat
+                    chpasswd:
+                      expire: false
+                    ssh_pwauth: true
+                    users:
+                    - name: cloud-user
+                      sudo: ALL=(ALL) NOPASSWD:ALL
+                      shell: /bin/bash
+        MANIFEST
+
+        echo
+        echo "Waiting for VMI Ready=True..."
+
+        for i in $(seq 1 90); do
+          phase="$(oc get vmi {{ udn_vm_name }} -n {{ udn_vm_namespace }} -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+          ready="$(oc get vmi {{ udn_vm_name }} -n {{ udn_vm_namespace }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+          echo "VMI phase=$phase Ready=$ready"
+
+          if [ "$ready" = "True" ]; then
+            break
+          fi
+
+          sleep 20
+        done
+
+        echo
+        echo "# VM status"
+        oc get vm -n {{ udn_vm_namespace }} {{ udn_vm_name }}
+        oc get vmi -n {{ udn_vm_namespace }} {{ udn_vm_name }} -o wide
+
+        echo
+        echo "# VMI interfaces"
+        oc get vmi -n {{ udn_vm_namespace }} {{ udn_vm_name }} -o jsonpath='{range .status.interfaces[*]}name={.name} ip={.ipAddress} mac={.mac}{"\n"}{end}' || true
+      register: udn_vm_deploy
+      changed_when: true
+
+    - name: Print UDN VM deploy result
+      ansible.builtin.debug:
+        msg: "{{ udn_vm_deploy.stdout }}"

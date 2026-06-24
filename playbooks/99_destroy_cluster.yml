@@ -1,0 +1,72 @@
+---
+- name: Destroy OpenShift cluster from installer artifacts
+  hosts: all
+  become: false
+  gather_facts: false
+  vars:
+    confirm_destroy: false
+    cleanup_artifacts: false
+  tasks:
+    - name: Refuse to destroy unless explicitly confirmed
+      ansible.builtin.assert:
+        that:
+          - confirm_destroy | bool
+        fail_msg: |
+          Refusing to destroy cluster {{ site_id }}.
+
+          Re-run with:
+            make destroy SITE={{ site_id }} CONFIRM_DESTROY=true
+
+          Or both sites:
+            make destroy-all CONFIRM_DESTROY=true
+
+    - name: Check install directory
+      ansible.builtin.stat:
+        path: "{{ install_dir }}"
+      register: install_dir_stat
+
+    - name: Stop if install directory is missing
+      ansible.builtin.fail:
+        msg: "{{ install_dir }} does not exist. Nothing to destroy for {{ site_id }}."
+      when: not install_dir_stat.stat.exists
+
+    - name: Check installer metadata
+      ansible.builtin.stat:
+        path: "{{ install_dir }}/metadata.json"
+      register: metadata_stat
+
+    - name: Check installer state file
+      ansible.builtin.stat:
+        path: "{{ install_dir }}/.openshift_install_state.json"
+      register: state_stat
+
+    - name: Show destroy target
+      ansible.builtin.debug:
+        msg: |
+          Destroying OpenShift cluster for {{ site_id }}
+
+          install_dir: {{ install_dir }}
+
+          This uses:
+            openshift-install destroy cluster --dir {{ install_dir }}
+
+    - name: Run openshift-install destroy cluster
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        openshift-install destroy cluster --dir {{ install_dir }} --log-level=info
+      args:
+        chdir: "{{ install_dir }}"
+      register: destroy_result
+      when:
+        - metadata_stat.stat.exists or state_stat.stat.exists
+
+    - name: Print destroy result
+      ansible.builtin.debug:
+        msg: "{{ destroy_result.stdout | default('No destroy command was run.') }}"
+
+    - name: Remove local install artifacts when requested
+      ansible.builtin.file:
+        path: "{{ install_dir }}"
+        state: absent
+      when: cleanup_artifacts | bool

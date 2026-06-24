@@ -1,0 +1,112 @@
+---
+- name: Install Kubernetes NMState Operator
+  hosts: all
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Install NMState Operator and NMState instance
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+
+        echo "# Installing Kubernetes NMState Operator"
+        echo "Site: {{ site_id }}"
+        echo
+
+        cat <<'MANIFEST' | oc apply -f -
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: openshift-nmstate
+          labels:
+            openshift.io/cluster-monitoring: "true"
+        ---
+        apiVersion: operators.coreos.com/v1
+        kind: OperatorGroup
+        metadata:
+          name: openshift-nmstate
+          namespace: openshift-nmstate
+        spec:
+          targetNamespaces:
+          - openshift-nmstate
+        ---
+        apiVersion: operators.coreos.com/v1alpha1
+        kind: Subscription
+        metadata:
+          name: kubernetes-nmstate-operator
+          namespace: openshift-nmstate
+        spec:
+          channel: stable
+          installPlanApproval: Automatic
+          name: kubernetes-nmstate-operator
+          source: redhat-operators
+          sourceNamespace: openshift-marketplace
+        MANIFEST
+
+        echo
+        echo "Waiting for NMState CSV to reach Succeeded..."
+
+        for i in $(seq 1 90); do
+          csv="$(oc get sub kubernetes-nmstate-operator -n openshift-nmstate -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
+
+          if [ -n "$csv" ]; then
+            phase="$(oc get csv "$csv" -n openshift-nmstate -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+            echo "CSV: $csv phase=$phase"
+
+            if [ "$phase" = "Succeeded" ]; then
+              break
+            fi
+          else
+            echo "CSV not created yet..."
+          fi
+
+          sleep 20
+        done
+
+        csv="$(oc get sub kubernetes-nmstate-operator -n openshift-nmstate -o jsonpath='{.status.installedCSV}' 2>/dev/null || true)"
+        if [ -z "$csv" ]; then
+          echo "ERROR: NMState Subscription did not create an installedCSV"
+          oc get sub,csv,installplan -n openshift-nmstate || true
+          exit 1
+        fi
+
+        phase="$(oc get csv "$csv" -n openshift-nmstate -o jsonpath='{.status.phase}' 2>/dev/null || true)"
+        if [ "$phase" != "Succeeded" ]; then
+          echo "ERROR: NMState CSV did not reach Succeeded"
+          oc get sub,csv,installplan -n openshift-nmstate || true
+          exit 1
+        fi
+
+        cat <<'MANIFEST' | oc apply -f -
+        apiVersion: nmstate.io/v1
+        kind: NMState
+        metadata:
+          name: nmstate
+        MANIFEST
+
+        echo
+        echo "Waiting for NMState handler pods..."
+
+        for i in $(seq 1 60); do
+          ready="$(oc get pods -n openshift-nmstate --no-headers 2>/dev/null | awk '($3=="Running" || $3=="Completed"){ok++} END{print ok+0}')"
+          total="$(oc get pods -n openshift-nmstate --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+          echo "NMState pods ready/running-ish: $ready/$total"
+
+          if [ "$total" -gt 0 ] && [ "$ready" -ge 1 ]; then
+            break
+          fi
+
+          sleep 20
+        done
+
+        echo
+        echo "# NMState status"
+        oc get nmstate
+        oc get pods -n openshift-nmstate
+      register: nmstate_install
+      changed_when: true
+
+    - name: Print NMState install result
+      ansible.builtin.debug:
+        msg: "{{ nmstate_install.stdout }}"

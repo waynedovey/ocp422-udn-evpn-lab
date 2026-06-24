@@ -1,0 +1,113 @@
+---
+- name: Enable VMware nested virtualization on OpenShift node VMs
+  hosts: all
+  become: false
+  gather_facts: false
+  vars:
+    confirm_nested_enable: false
+    nested_virt_nodes: ""
+  tasks:
+    - name: Refuse to run unless explicitly confirmed
+      ansible.builtin.assert:
+        that:
+          - confirm_nested_enable | bool
+        fail_msg: |
+          Refusing to change VMware VM hardware settings for {{ site_id }}.
+
+          This playbook powers off OpenShift node VMs one at a time.
+
+          Re-run with:
+            make nested-enable SITE={{ site_id }} CONFIRM_NESTED_ENABLE=true
+
+    - name: Check govc is available
+      ansible.builtin.command: which govc
+      register: govc_check
+      changed_when: false
+
+    - name: Enable nested virtualization one node at a time
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export PATH={{ installer_bin_dir }}:$PATH
+        export KUBECONFIG={{ kubeconfig_path }}
+
+        echo "# VMware nested virtualization enablement"
+        echo "Site: {{ site_id }}"
+        echo "vCenter: {{ vcenter_server }}"
+        echo "Folder: {{ vcenter_folder }}"
+        echo
+
+        if [ -n "{{ nested_virt_nodes | default('') }}" ]; then
+          nodes="{{ nested_virt_nodes }}"
+        else
+          nodes="$(oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
+        fi
+
+        for node in $nodes; do
+          echo
+          echo "============================================================"
+          echo "Processing node: $node"
+          echo "============================================================"
+
+          vm="{{ vcenter_folder }}/$node"
+
+          if ! govc vm.info "$vm" >/dev/null 2>&1; then
+            echo "VM not found at expected path: $vm"
+            echo "Trying govc find under folder {{ vcenter_folder }}..."
+            vm="$(govc find "{{ vcenter_folder }}" -type m -name "$node" | head -1 || true)"
+          fi
+
+          if [ -z "$vm" ]; then
+            echo "ERROR: Could not find VMware VM for node $node"
+            exit 1
+          fi
+
+          echo "VM path: $vm"
+
+          echo "Cordoning node..."
+          oc adm cordon "$node" || true
+
+          echo "Draining node..."
+          oc adm drain "$node" \
+            --ignore-daemonsets \
+            --delete-emptydir-data \
+            --force \
+            --grace-period=60 \
+            --timeout=10m
+
+          echo "Powering off VM..."
+          govc vm.power -off "$vm" || true
+
+          echo "Waiting for VM to power off..."
+          sleep 30
+
+          echo "Enabling nested virtualization..."
+          govc vm.change -vm "$vm" -nested-hv-enabled=true
+          govc vm.change -vm "$vm" -e vhv.enable=TRUE || true
+
+          echo "Powering on VM..."
+          govc vm.power -on "$vm"
+
+          echo "Waiting for OpenShift node to return Ready..."
+          oc wait node/"$node" --for=condition=Ready --timeout=20m
+
+          echo "Uncordoning node..."
+          oc adm uncordon "$node"
+
+          echo "Node completed: $node"
+          echo "Waiting before moving to next node..."
+          sleep 60
+        done
+
+        echo
+        echo "Nested virtualization enablement completed for {{ site_id }}"
+      environment:
+        GOVC_URL: "{{ vcenter_server }}"
+        GOVC_USERNAME: "{{ vcenter_username }}"
+        GOVC_PASSWORD: "{{ vcenter_password }}"
+        GOVC_INSECURE: "1"
+      register: nested_enable_result
+      changed_when: true
+
+    - name: Print nested virtualization enablement result
+      ansible.builtin.debug:
+        msg: "{{ nested_enable_result.stdout }}"
